@@ -11,8 +11,13 @@ public struct HiggsTTSSynthesisOptions: Equatable, Sendable {
     public let temperature: Float
     public let topP: Float?
     public let topK: Int?
+    /// Hard cap on generated audio frames. `<= 0` means unbounded: generation
+    /// runs until the model emits its own end-of-content code, up to
+    /// `HiggsTTSModel.unboundedFrameCap` as a runaway-generation safety net.
     public let maxNewTokens: Int
     public let seed: UInt64
+
+    public var isMaxNewTokensUnbounded: Bool { maxNewTokens <= 0 }
 
     public init(
         temperature: Float = 1.0,
@@ -34,9 +39,6 @@ public struct HiggsTTSSynthesisOptions: Equatable, Sendable {
                 throw HiggsTTSError.invalidCodes("topK must be positive")
             }
         }
-        guard maxNewTokens > 0 else {
-            throw HiggsTTSError.invalidCodes("maxNewTokens must be positive")
-        }
         self.temperature = temperature
         self.topP = topP
         self.topK = topK
@@ -52,6 +54,10 @@ public struct HiggsTTSSynthesisOptions: Equatable, Sendable {
 public final class HiggsTTSModel: SpeechGenerationModel, ModelMemoryManageable, @unchecked Sendable {
     public static let defaultModelId = "aufklarer/Higgs-TTS-3-4B-MLX-bf16"
     public static let modelKey = "higgs-tts-3"
+    /// Runaway-generation safety net for unbounded `maxNewTokens` (<= 0):
+    /// 24,000 frames at 25 frames/second is 16 minutes of audio, generation
+    /// still stops earlier via the model's own end-of-content code.
+    public static let unboundedFrameCap = 24_000
 
     private static let requiredFiles = [
         "config.json",
@@ -171,6 +177,9 @@ public final class HiggsTTSModel: SpeechGenerationModel, ModelMemoryManageable, 
         var rows: [[Int32]] = []
         let codebooks = config.audioNumCodebooks
         let rampIndex = MLXArray(0..<Int32(codebooks))
+        let frameCap = options.isMaxNewTokensUnbounded
+            ? HiggsTTSModel.unboundedFrameCap
+            : options.maxNewTokens
 
         // Samples codes for a hidden state with the delay ramp masked
         // on-device, so the result can feed back without a CPU round trip.
@@ -193,9 +202,9 @@ public final class HiggsTTSModel: SpeechGenerationModel, ModelMemoryManageable, 
         // compute. Costs one discarded in-flight step at EOC.
         var current = sampleCodes(last, step: 0)
         asyncEval(current)
-        for step in 0..<options.maxNewTokens {
+        for step in 0..<frameCap {
             var upcoming: MLXArray?
-            if step + 1 < options.maxNewTokens {
+            if step + 1 < frameCap {
                 let next = fused.embed(current.reshaped(1, 1, codebooks))
                 let (h, advanced) = backbone.forward(embeddings: next, state: state)
                 state = advanced
@@ -211,7 +220,7 @@ public final class HiggsTTSModel: SpeechGenerationModel, ModelMemoryManageable, 
             guard let upcoming else { break }
             current = upcoming
             if step % 64 == 63 {
-                progressHandler?(min(0.76 + Double(step) / Double(options.maxNewTokens) * 0.2, 0.95),
+                progressHandler?(min(0.76 + Double(step) / Double(frameCap) * 0.2, 0.95),
                                  "Sampling Higgs audio frames")
             }
         }

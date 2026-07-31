@@ -224,7 +224,11 @@ public struct SpeakCommand: ParsableCommand {
     @Option(name: .long, help: "[higgs] Top-k sampling cutoff (off by default)")
     public var higgsTopK: Int?
 
-    @Option(name: .long, help: "[higgs] Maximum generated audio frames (default 2048, 25 frames/second)")
+    @Option(
+        name: .long,
+        help:
+            "[higgs] Maximum generated audio frames (default 2048, 25 frames/second); 0 or a negative value means unbounded (generate until the model's natural stop)"
+    )
     public var higgsMaxNewTokens: Int = 2048
 
     @Option(name: .long, help: "[higgs] MLX sampling seed (default 0)")

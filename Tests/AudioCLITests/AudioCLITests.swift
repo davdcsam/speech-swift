@@ -1182,9 +1182,20 @@ final class SpeakCommandTests: XCTestCase {
         expectSpeakReject(
             ["speak", "Hello", "--engine", "higgs", "--higgs-top-k", "0"],
             contains: "topK")
-        expectSpeakReject(
-            ["speak", "Hello", "--engine", "higgs", "--higgs-max-new-tokens", "0"],
-            contains: "maxNewTokens")
+    }
+
+    func testHiggsMaxNewTokensZeroOrNegativeMeansUnbounded() throws {
+        for value in ["0", "--higgs-max-new-tokens=-1"] {
+            let args: [String]
+            if value.hasPrefix("--") {
+                args = ["speak", "Hello", "--engine", "higgs", value]
+            } else {
+                args = ["speak", "Hello", "--engine", "higgs", "--higgs-max-new-tokens", value]
+            }
+            let cmd = try AudioCLI.parseAsRoot(args)
+            let speak = try XCTUnwrap(cmd as? SpeakCommand)
+            XCTAssertLessThanOrEqual(speak.higgsMaxNewTokens, 0)
+        }
     }
 
     func testIndicMioAcceptsVoiceSampleReference() throws {
